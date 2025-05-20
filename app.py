@@ -1,19 +1,37 @@
 import streamlit as st
 import torch
-import torch.nn.functional as F
-from PIL import Image
-import cv2
-import numpy as np
+import torch.nn as nn
 from torchvision import transforms
+from torchvision.models import efficientnet_b0
+import cv2
+from PIL import Image
+import numpy as np
+import matplotlib.pyplot as plt
 
-# Load model (make sure you load your .pth properly)
+# Set device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# Define the model class
+class EfficientNetEmotion(nn.Module):
+    def __init__(self, num_classes=7):
+        super(EfficientNetEmotion, self).__init__()
+        self.model = efficientnet_b0(pretrained=True)
+        self.model.features[0][0] = nn.Conv2d(1, 32, kernel_size=3, stride=2, padding=1, bias=False)
+        self.model.classifier[1] = nn.Linear(self.model.classifier[1].in_features, num_classes)
+
+    def forward(self, x):
+        return self.model(x)
+
+# Load the trained model
 model = EfficientNetEmotion()
 model.load_state_dict(torch.load("emotion_model.pth", map_location=device))
-model.eval()
 model.to(device)
+model.eval()
 
-# Define transforms same as training
+# Emotion labels
+class_names = ['Angry', 'Disgust', 'Fear', 'Happy', 'Sad', 'Surprise', 'Neutral']
+
+# Define transformation
 transform = transforms.Compose([
     transforms.Grayscale(num_output_channels=1),
     transforms.Resize((48, 48)),
@@ -21,35 +39,50 @@ transform = transforms.Compose([
     transforms.Normalize((0.5,), (0.5,))
 ])
 
-class_names = ['Angry', 'Disgust', 'Fear', 'Happy', 'Neutral', 'Sad', 'Surprise']  # update with your classes
-
-def detect_face(img):
+# Face detection function
+def detect_face(image):
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-    gray = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY)
-    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5)
-    return len(faces) > 0
+    image_np = np.array(image.convert("RGB"))
+    gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
+    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4)
+    return faces
 
-st.title("Emotion Detection with Probabilities")
+# Predict function
+def predict_emotion(image):
+    faces = detect_face(image)
+    if len(faces) == 0:
+        return None, None
 
-uploaded_file = st.file_uploader("Upload an image...", type=["jpg", "jpeg", "png"])
+    # Crop the first face
+    x, y, w, h = faces[0]
+    face = image.crop((x, y, x + w, y + h))
+    face_tensor = transform(face).unsqueeze(0).to(device)
+
+    with torch.no_grad():
+        output = model(face_tensor)
+        probabilities = torch.softmax(output, dim=1).cpu().numpy()[0]
+        predicted_label = class_names[np.argmax(probabilities)]
+
+    return predicted_label, probabilities
+
+# Streamlit UI
+st.title("Emotion Detection from Facial Image")
+uploaded_file = st.file_uploader("Upload a face image", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
-    img = Image.open(uploaded_file).convert("RGB")
-    st.image(img, caption="Uploaded Image", use_container_width=True)
-    
-    if detect_face(img):
-        input_tensor = transform(img).unsqueeze(0).to(device)
-        with torch.no_grad():
-            outputs = model(input_tensor)
-            probs = F.softmax(outputs, dim=1)
-            top_prob, top_class = torch.max(probs, dim=1)
-            
-            st.write(f"**Predicted Emotion:** {class_names[top_class.item()]}")
-            st.write(f"**Confidence:** {top_prob.item()*100:.2f}%")
-            
-            # Display all class probabilities
-            st.write("### Class Probabilities:")
-            for i, class_name in enumerate(class_names):
-                st.write(f"{class_name}: {probs[0][i].item()*100:.2f}%")
+    image = Image.open(uploaded_file)
+    st.image(image, caption="Uploaded Image", use_column_width=True)
+
+    label, probs = predict_emotion(image)
+
+    if label is None:
+        st.warning("No face detected in the image. Please upload a clear face image.")
     else:
-        st.error("This is not a face image. Please upload a valid face photo.")
+        st.success(f"Predicted Emotion: **{label}**")
+
+        # Show probabilities
+        fig, ax = plt.subplots()
+        ax.bar(class_names, probs, color='skyblue')
+        ax.set_ylabel('Probability')
+        ax.set_title('Emotion Probabilities')
+        st.pyplot(fig)
