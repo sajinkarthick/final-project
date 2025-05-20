@@ -67,7 +67,7 @@ if uploaded_file is not None:
             pred_idx = torch.argmax(probs, dim=1).item()
             pred_label = class_names[pred_idx]
 
-        st.image(face_pil, caption=f"Detected Face ({pred_label})", use_column_width=True)
+        st.image(face_pil, caption=f"Detected Face ({pred_label})", use_container_width=True)
         st.success(f"Predicted Emotion: {pred_label}")
 
         # Show class probabilities
