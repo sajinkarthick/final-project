@@ -24,7 +24,7 @@ class EfficientNetEmotion(nn.Module):
 
 # Load the trained model
 model = EfficientNetEmotion()
-model.load_state_dict(torch.load("emotion_model.pth", map_location=device))
+model.load_state_dict(torch.load("emotion_effi_model.pth", map_location=device))
 model.to(device)
 model.eval()
 
