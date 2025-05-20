@@ -3,11 +3,13 @@ import torch
 import torch.nn as nn
 from torchvision import transforms
 from PIL import Image
-import torch.nn.functional as F
-import pandas as pd
-import matplotlib.pyplot as plt
+import numpy as np
+import cv2
 
-# EfficientNet model definition
+# Device setup
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# Define the same model class used during training
 from torchvision.models import efficientnet_b0
 
 class EfficientNetEmotion(nn.Module):
@@ -20,10 +22,15 @@ class EfficientNetEmotion(nn.Module):
     def forward(self, x):
         return self.model(x)
 
-# Class labels
+# Load model weights
+model = EfficientNetEmotion().to(device)
+model.load_state_dict(torch.load("emotion_model.pth", map_location=device))
+model.eval()
+
+# Class names
 class_names = ['Angry', 'Disgust', 'Fear', 'Happy', 'Sad', 'Surprise', 'Neutral']
 
-# Image transformation
+# Transform
 transform = transforms.Compose([
     transforms.Grayscale(num_output_channels=1),
     transforms.Resize((48, 48)),
@@ -31,53 +38,40 @@ transform = transforms.Compose([
     transforms.Normalize((0.5,), (0.5,))
 ])
 
-# Load model
-@st.cache_resource
-def load_model():
-    model = EfficientNetEmotion(num_classes=7)
-    model.load_state_dict(torch.load("emotion_effi_model.pth", map_location=torch.device('cpu')))
-    model.eval()
-    return model
+# Load OpenCV face detector
+face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 
-# Prediction with probabilities
-def predict_emotion(img, model):
-    img_tensor = transform(img).unsqueeze(0)  # Add batch dimension
-    with torch.no_grad():
-        output = model(img_tensor)
-        probs = F.softmax(output, dim=1).squeeze().cpu().numpy()
-        pred_class = int(torch.argmax(output, dim=1))
-    return pred_class, probs
+st.title("Emotion Detection from Face Image (.pth Model)")
 
-# Streamlit UI
-st.title("Emotion Detection from Facial Image")
-st.write("Upload a face image to detect the emotion and view class probabilities.")
+uploaded_file = st.file_uploader("Upload a face image", type=["jpg", "jpeg", "png"])
 
-uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
-
-if uploaded_file:
+if uploaded_file is not None:
     image = Image.open(uploaded_file).convert("RGB")
-    st.image(image, caption="Uploaded Image", use_container_width=True)
-    st.write("Classifying...")
+    img_np = np.array(image)
 
-    model = load_model()
-    pred_class, probs = predict_emotion(image, model)
+    # Convert to grayscale for face detection
+    gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4)
 
-    # Prediction result
-    st.success(f"Predicted Emotion: **{class_names[pred_class]}**")
+    if len(faces) == 0:
+        st.warning("No face detected. Please upload an image containing a visible face.")
+    else:
+        x, y, w, h = faces[0]  # Only first face
+        face_img = img_np[y:y+h, x:x+w]
+        face_pil = Image.fromarray(face_img)
+        input_tensor = transform(face_pil).unsqueeze(0).to(device)
 
-    # Display probabilities as table
-    st.subheader("Class Probabilities")
-    prob_df = pd.DataFrame({
-        "Emotion": class_names,
-        "Probability": [f"{p * 100:.2f}%" for p in probs]
-    })
-    st.dataframe(prob_df, use_container_width=True)
+        with torch.no_grad():
+            output = model(input_tensor)
+            probs = torch.softmax(output, dim=1)
+            pred_idx = torch.argmax(probs, dim=1).item()
+            pred_label = class_names[pred_idx]
 
-    # Optional: Bar chart
-    st.subheader("Probability Distribution")
-    fig, ax = plt.subplots()
-    ax.bar(class_names, probs, color="skyblue")
-    ax.set_ylabel("Probability")
-    ax.set_ylim(0, 1)
-    ax.set_title("Emotion Probabilities")
-    st.pyplot(fig)
+        st.image(face_pil, caption=f"Detected Face ({pred_label})", use_column_width=True)
+        st.success(f"Predicted Emotion: {pred_label}")
+
+        # Show class probabilities
+        st.subheader("Class Probabilities:")
+        prob_dict = {class_names[i]: float(probs[0][i]) for i in range(len(class_names))}
+        st.bar_chart(prob_dict)
+
