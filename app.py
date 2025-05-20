@@ -8,10 +8,8 @@ from PIL import Image
 import numpy as np
 import matplotlib.pyplot as plt
 
-# Set device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Define the model class
 class EfficientNetEmotion(nn.Module):
     def __init__(self, num_classes=7):
         super(EfficientNetEmotion, self).__init__()
@@ -22,16 +20,13 @@ class EfficientNetEmotion(nn.Module):
     def forward(self, x):
         return self.model(x)
 
-# Load the trained model
 model = EfficientNetEmotion()
 model.load_state_dict(torch.load("emotion_effi_model.pth", map_location=device))
 model.to(device)
 model.eval()
 
-# Emotion labels
 class_names = ['Angry', 'Disgust', 'Fear', 'Happy', 'Sad', 'Surprise', 'Neutral']
 
-# Define transformation
 transform = transforms.Compose([
     transforms.Grayscale(num_output_channels=1),
     transforms.Resize((48, 48)),
@@ -39,7 +34,6 @@ transform = transforms.Compose([
     transforms.Normalize((0.5,), (0.5,))
 ])
 
-# Face detection function
 def detect_face(image):
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
     image_np = np.array(image.convert("RGB"))
@@ -47,7 +41,6 @@ def detect_face(image):
     faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4)
     return faces
 
-# Predict function
 def predict_emotion(image):
     faces = detect_face(image)
     if len(faces) == 0:
@@ -65,8 +58,7 @@ def predict_emotion(image):
 
     return predicted_label, probabilities
 
-# Streamlit UI
-st.title("Emotion Detection from Facial Image")
+st.title("Emotion Detection")
 uploaded_file = st.file_uploader("Upload a face image", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
